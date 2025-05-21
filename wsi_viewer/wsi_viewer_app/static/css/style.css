@@ -1,0 +1,100 @@
+/* static/css/style.css */
+/* You can add custom styles here if needed, though Tailwind is used for basics. */
+
+body {
+    font-family: 'Inter', sans-serif; /* Ensure Inter font is loaded if not using Tailwind defaults */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    background-color: #f0f2f5; /* Light gray background */
+    padding: 1rem; /* Add some padding around the body */
+    box-sizing: border-box;
+}
+
+/* Container for the viewer and controls to manage overall layout */
+.viewer-container {
+    width: 100%;
+    height: 90vh; /* Adjust as needed, e.g., 800px or 90vh */
+    max-width: 1400px; /* Max width for larger screens */
+    position: relative; /* For positioning controls */
+    background-color: #ffffff; /* White background for the container */
+    border-radius: 12px; /* Rounded corners for the container */
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15); /* Softer shadow */
+    overflow: hidden; /* Ensure content stays within rounded corners */
+}
+
+#openseadragon-viewer {
+    width: 100%;
+    height: 100%;
+    /* border-radius is inherited or can be set if viewer-container is not used */
+}
+
+.controls-container {
+    position: absolute;
+    top: 15px; /* Adjusted spacing */
+    left: 15px;
+    background-color: rgba(255, 255, 255, 0.95); /* Slightly more opaque */
+    padding: 1rem; /* More padding */
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); /* Enhanced shadow */
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem; /* 12px */
+    max-width: 280px; /* Limit width of controls */
+}
+
+.controls-container h2 {
+    font-size: 1.125rem; /* 18px */
+    font-weight: 600; /* Semibold */
+    color: #1f2937; /* Tailwind gray-800 */
+    margin-bottom: 0.5rem; /* 8px */
+    border-bottom: 1px solid #e5e7eb; /* Tailwind gray-200 */
+    padding-bottom: 0.5rem;
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem; /* 8px */
+}
+
+.control-group label {
+    font-size: 0.875rem; /* 14px */
+    color: #374151; /* Tailwind gray-700 */
+    flex-shrink: 0; /* Prevent label from shrinking */
+}
+
+.control-group input[type="range"] {
+    flex-grow: 1; /* Allow slider to take available space */
+    accent-color: #3b82f6; /* Tailwind blue-500 for the slider thumb */
+}
+
+.control-group input[type="checkbox"] {
+    width: 1rem; /* 16px */
+    height: 1rem; /* 16px */
+    accent-color: #3b82f6; /* Tailwind blue-500 */
+}
+
+.info-text {
+    font-size: 0.875rem; /* 14px */
+    color: #4b5563; /* Tailwind gray-600 */
+    margin-top: 0.25rem; /* 4px */
+    line-height: 1.4;
+}
+
+.info-text .font-semibold {
+    color: #1f2937; /* Tailwind gray-800 */
+}
+
+/* OpenSeadragon Navigator styling */
+.openseadragon-container .navigator {
+    border: 2px solid rgba(0,0,0,0.2);
+    border-radius: 4px;
+    background-color: rgba(250, 250, 250, 0.85);
+}
+```
+You can create a file `static/css/style.css` and paste this CSS content into it. Then, in `templates/index.html`, uncomment or add the line: `<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">` inside the `<head>` section if you prefer to use this stylesheet over the inline styles or Tailwind utility classes for these specific elements. For simplicity, the HTML provided uses inline Tailwind and `<style>` ta

@@ -1,0 +1,284 @@
+﻿Agent Development Kit (ADK) Documentation
+This document provides a precise overview of the Agent Development Kit (ADK), detailing its core components, functionalities, and implementation guidelines. It is intended for developers and AI models interacting with this SDK.
+Core Concepts
+The SDK is designed to build and run sophisticated AI agents. Key concepts include:
+* Agents (BaseAgent, LlmAgent): The fundamental actors that perform tasks. LlmAgent is the primary agent type, leveraging Large Language Models. Agents can have sub-agents, forming a hierarchy.
+* Runners (Runner, InMemoryRunner): Responsible for executing agents within a session, managing message flow and service interactions.
+* Sessions (Session, BaseSessionService): Represent a conversation or interaction, storing events and state.
+* Events (Event): Represent occurrences within a session, such as user messages, agent responses, or tool calls.
+* Tools (BaseTool, FunctionTool, BaseToolset): Extend agent capabilities, allowing them to interact with external systems or perform specific functions.
+* Memory (BaseMemoryService): Provides agents with the ability to store and retrieve information from past interactions.
+* Artifacts (BaseArtifactService): Manages storage and retrieval of file-based data (blobs) associated with sessions.
+* LLM Models (BaseLlm, Gemini, Claude, LiteLlm): Abstractions for interacting with different LLMs.
+* InvocationContext: A snapshot of the current state during an agent's run, providing access to services, session data, and configuration.
+* Flows (BaseLlmFlow, SingleFlow, AutoFlow): Define the logic for how an LlmAgent processes information, interacts with LLMs, and uses tools.
+Modules and Functionalities
+1. Agents (google.adk.agents)
+Defines the structure and behavior of agents.
+* BaseAgent(name, description, sub_agents, before_agent_callback, after_agent_callback):
+   * Abstract base class for all agents.
+   * name: Unique identifier for the agent.
+   * description: Describes the agent's capabilities (used for agent transfer).
+   * sub_agents: A list of BaseAgent instances.
+   * run_async(parent_context: InvocationContext): Primary method to execute the agent.
+   * run_live(parent_context: InvocationContext): For real-time (e.g., voice) interactions.
+   * Callbacks (before_agent_callback, after_agent_callback): Allow custom logic before/after agent execution. Signature: Callable[[CallbackContext], Optional[types.Content]].
+* LlmAgent(BaseAgent) (aliased as Agent): The core LLM-powered agent.
+   * model: Union[str, BaseLlm]: Specifies the LLM to use (e.g., "gemini-1.5-flash" or a BaseLlm instance). Inherits from parent if not set.
+   * instruction: Union[str, InstructionProvider]: System instructions for the LLM. InstructionProvider is Callable[[ReadonlyContext], Union[str, Awaitable[str]]].
+   * global_instruction: Union[str, InstructionProvider]: System instructions applied to all agents in the tree (effective in root agent).
+   * tools: list[ToolUnion]: List of tools available to the agent. ToolUnion can be a Callable, BaseTool, or BaseToolset.
+   * generate_content_config: Optional[types.GenerateContentConfig]: Additional LLM generation parameters (e.g., temperature, safety settings).
+   * disallow_transfer_to_parent: bool, disallow_transfer_to_peers: bool: Control LLM-driven agent transfers.
+   * include_contents: Literal['default', 'none']: Whether to include conversation history in LLM requests.
+   * input_schema: Optional[type[BaseModel]]: Pydantic model defining input when agent is used as a tool.
+   * output_schema: Optional[type[BaseModel]]: Pydantic model defining structured output. If set, agent can only reply (no tools/transfer).
+   * output_key: Optional[str]: Key to store agent's output in session state.
+   * planner: Optional[BasePlanner]: Enables multi-step planning (see google.adk.planners).
+   * code_executor: Optional[BaseCodeExecutor]: Enables code execution (see google.adk.code_executors).
+   * examples: Optional[ExamplesUnion]: Few-shot examples for the LLM. ExamplesUnion is list[Example] or BaseExampleProvider.
+   * Callbacks (before_model_callback, after_model_callback, before_tool_callback, after_tool_callback): Hooks for LLM and tool interactions.
+      * BeforeModelCallback: Callable[[CallbackContext, LlmRequest], Optional[LlmResponse]]
+      * AfterModelCallback: Callable[[CallbackContext, LlmResponse], Optional[LlmResponse]]
+      * BeforeToolCallback: Callable[[BaseTool, dict, ToolContext], Optional[dict]]
+      * AfterToolCallback: Callable[[BaseTool, dict, ToolContext, dict], Optional[dict]]
+* SequentialAgent(BaseAgent): Runs its sub_agents one after another.
+   * In run_live mode, it injects a task_completed() tool into sub-agents to signal progression.
+* ParallelAgent(BaseAgent): Runs its sub_agents concurrently, with each sub-agent operating in an isolated branch of the conversation history.
+* LoopAgent(BaseAgent): Runs its sub_agents in a loop.
+   * max_iterations: Optional[int]: Limits the number of loops. Stops if a sub-agent escalates.
+* LangGraphAgent(BaseAgent): Integrates with LangGraph.
+   * graph: CompiledGraph: The LangGraph compiled graph.
+   * instruction: str: System instruction for the LangGraph agent.
+* Contexts:
+   * InvocationContext: Passed during agent runs, contains all necessary runtime information and service accessors.
+      * session: Session: Current session data.
+      * agent: BaseAgent: The currently running agent.
+      * user_content: Optional[types.Content]: The initial user message for this invocation.
+      * run_config: RunConfig: Runtime configurations.
+      * live_request_queue: LiveRequestQueue: For run_live.
+      * increment_llm_call_count(): Tracks LLM calls against run_config.max_llm_calls.
+   * ReadonlyContext: Provides read-only access to InvocationContext data for providers (e.g., InstructionProvider).
+   * CallbackContext(ReadonlyContext): Used in callbacks, allows modification of session state (ctx.state['key'] = value) and artifact management (ctx.save_artifact(...)).
+* RunConfig: Configuration for agent execution.
+   * speech_config: Optional[types.SpeechConfig].
+   * response_modalities: Optional[list[str]] (e.g., ['AUDIO'], ['TEXT']).
+   * save_input_blobs_as_artifacts: bool.
+   * streaming_mode: StreamingMode (NONE, SSE, BIDI).
+   * support_cfc: bool: Enable Compositional Function Calling (experimental, requires SSE/BIDI).
+   * output_audio_transcription: Optional[types.AudioTranscriptionConfig].
+   * input_audio_transcription: Optional[types.AudioTranscriptionConfig].
+   * max_llm_calls: int: Limit on LLM calls per Runner.run_async invocation. Default: 500. <=0 means unbounded.
+2. Runners (google.adk.runners)
+Orchestrate agent execution.
+* Runner(app_name, agent, artifact_service, session_service, memory_service):
+   * app_name: str: Name of the application.
+   * agent: BaseAgent: The root agent to run.
+   * Services: Instances of BaseArtifactService, BaseSessionService, BaseMemoryService.
+   * run(user_id, session_id, new_message, run_config): Synchronous execution (wraps run_async).
+   * run_async(user_id, session_id, new_message, run_config): Asynchronous execution.
+      * Fetches/creates Session.
+      * Creates InvocationContext.
+      * Appends new_message to session history (handles save_input_blobs_as_artifacts via artifact_service).
+      * Determines the correct agent to run (root or last active LlmAgent if transferable).
+      * Yields Event objects from the agent's execution.
+   * run_live(user_id, session_id, live_request_queue, run_config): Experimental live mode execution.
+* InMemoryRunner(agent, app_name='InMemoryRunner'): Subclass of Runner that initializes with in-memory implementations of all services (InMemoryArtifactService, InMemorySessionService, InMemoryMemoryService). Useful for testing and development.
+3. LLM Models (google.adk.models)
+Provides interfaces to various Large Language Models.
+* BaseLlm(model: str): Abstract base class for LLM integrations.
+   * model: Name of the LLM (e.g., "gemini-1.5-flash").
+   * supported_models(): Returns list of regex patterns for supported model names.
+   * generate_content_async(llm_request: LlmRequest, stream: bool): Primary method to call the LLM. Yields LlmResponse.
+   * connect(llm_request: LlmRequest): Establishes a live connection (for BIDI streaming). Returns BaseLlmConnection.
+* Gemini(BaseLlm): Integration for Google Gemini models.
+   * Default model: "gemini-1.5-flash".
+   * Uses google.genai.Client.
+   * connect returns GeminiLlmConnection.
+* Claude(BaseLlm): Integration for Anthropic Claude models (via Vertex AI).
+   * Default model: "claude-3-5-sonnet-v2@20241022".
+   * Uses anthropic.AnthropicVertex.
+* LiteLlm(BaseLlm): Wrapper for models supported by the litellm library.
+   * Requires appropriate environment variables for the target model (e.g., VERTEXAI_PROJECT).
+   * Initialize with LiteLlm(model="provider/model_name", **kwargs_for_litellm_completion).
+* LlmRequest: Encapsulates a request to an LLM.
+   * model: Optional[str].
+   * contents: list[types.Content].
+   * config: Optional[types.GenerateContentConfig].
+   * tools_dict: dict[str, BaseTool] (populated internally).
+   * append_instructions(instructions: list[str]).
+   * append_tools(tools: list[BaseTool]).
+   * set_output_schema(base_model: type[BaseModel]).
+* LlmResponse: Encapsulates a response from an LLM.
+   * content: Optional[types.Content].
+   * error_code: Optional[str], error_message: Optional[str].
+   * partial: bool (for streaming), turn_complete: bool (for streaming).
+   * usage_metadata: Optional[types.GenerateContentResponseUsageMetadata].
+   * grounding_metadata: Optional[types.GroundingMetadata].
+* LLMRegistry: Manages LLM implementations.
+   * new_llm(model_name: str): Creates an instance of the appropriate BaseLlm subclass.
+   * register(llm_cls: type[BaseLlm]): Registers an LLM class.
+   * resolve(model_name: str): Finds the BaseLlm subclass for a model name.
+* Live Connections (BaseLlmConnection, GeminiLlmConnection): For BIDI streaming.
+   * send_history(history: list[types.Content]).
+   * send_content(content: types.Content).
+   * send_realtime(blob: types.Blob).
+   * receive(): Yields LlmResponse.
+   * close().
+4. Sessions (google.adk.sessions)
+Manage conversation state and history.
+* Session(id, user_id, app_name, events, state):
+   * id: str, user_id: str, app_name: str.
+   * events: list[Event]: Chronological list of occurrences.
+   * state: dict: A key-value store for arbitrary session data.
+* BaseSessionService: Abstract class for session persistence.
+   * get_session(app_name, user_id, session_id): Retrieves a session.
+   * save_session(session): Persists a session (typically called internally).
+   * append_event(session, event): Adds an event to the session and persists.
+* InMemorySessionService(BaseSessionService): In-memory implementation.
+* State(UserDict): A dictionary-like object for session.state that tracks changes. Used by CallbackContext to manage state deltas.
+5. Events (google.adk.events)
+Represent actions and data points within a session.
+* Event(invocation_id, author, content, actions, ...):
+   * id: str (auto-generated).
+   * invocation_id: str: Links event to a specific Runner.run_async call.
+   * author: str: Who generated the event (e.g., "user", agent name).
+   * content: Optional[types.Content]: The actual data of the event.
+   * actions: EventActions: Describes changes resulting from this event (e.g., state delta, artifact delta, agent transfer).
+   * branch: Optional[str]: For parallel agent execution.
+   * partial: bool, turn_complete: bool: For streaming.
+   * get_function_calls(), get_function_responses(): Helpers to extract tool interactions.
+   * is_final_response(): Checks if this event concludes the agent's turn without tool calls or transfers.
+6. Tools (google.adk.tools)
+Enable agents to perform actions and interact with external systems.
+* BaseTool(name, description, input_schema): Abstract base for tools.
+   * name: str: Unique name for the tool.
+   * description: str: Description for the LLM to understand its use.
+   * input_schema: Optional[type[BaseModel]]: Pydantic model for tool arguments.
+   * get_declaration(): Returns types.FunctionDeclaration for the LLM.
+   * execute(args: dict, tool_context: ToolContext): Executes the tool logic. Returns dict.
+   * process_llm_request(tool_context: ToolContext, llm_request: LlmRequest): Optional hook to modify LlmRequest before LLM call (e.g., add tool-specific instructions).
+* FunctionTool(func, name, description, input_schema): Wraps a Python callable into a BaseTool. Infers schema from type hints if input_schema not provided.
+* BaseToolset: Abstract class to group multiple tools.
+   * get_tools(ctx: ReadonlyContext): Returns list[BaseTool].
+* ToolContext(CallbackContext): Context provided during tool execution, allowing access to session state and artifact services.
+* Built-in Tools:
+   * google.adk.tools.transfer_to_agent_tool.transfer_to_agent(agent_name: str): Used by AutoFlow for agent transfers.
+   * google.adk.tools._built_in_code_execution_tool.built_in_code_execution(code: str): Used by BuiltInCodeExecutor.
+7. Memory (google.adk.memory)
+Provides long-term storage and retrieval for agents.
+* BaseMemoryService: Abstract class for memory operations.
+   * add_session_to_memory(session: Session): Ingests a session's events into memory.
+   * search_memory(app_name: str, user_id: str, query: str): Searches memory. Returns SearchMemoryResponse.
+* SearchMemoryResponse(memories: list[MemoryEntry]): Container for search results.
+* MemoryEntry(content, author, timestamp): A single piece of retrieved memory.
+* InMemoryMemoryService(BaseMemoryService): Simple in-memory keyword-based search.
+* VertexAiRagMemoryService(BaseMemoryService): Uses Vertex AI RAG for semantic search.
+   * __init__(rag_corpus: str, similarity_top_k: Optional[int], vector_distance_threshold: float).
+   * rag_corpus: Name or ID of the Vertex AI RAG corpus.
+8. Artifacts (google.adk.artifacts)
+Manages file storage.
+* BaseArtifactService: Abstract class for artifact operations.
+   * save_artifact(app_name, user_id, session_id, filename: str, artifact: types.Part): Saves a file. Returns version int.
+   * load_artifact(app_name, user_id, session_id, filename: str, version: Optional[int]): Loads a file. Returns Optional[types.Part].
+   * list_artifact_keys(...), delete_artifact(...), list_versions(...).
+* InMemoryArtifactService(BaseArtifactService): In-memory implementation.
+* GcsArtifactService(BaseArtifactService): Uses Google Cloud Storage.
+   * __init__(bucket_name: str, **kwargs_for_gcs_client).
+9. Telemetry (google.adk.telemetry)
+Provides tracing for ADK-specific operations.
+* Uses OpenTelemetry (opentelemetry.trace). Tracer name: gcp.vertex.agent.
+* Functions to trace specific events:
+   * trace_tool_call(args: dict)
+   * trace_tool_response(invocation_context, event_id, function_response_event)
+   * trace_call_llm(invocation_context, event_id, llm_request, llm_response)
+   * trace_send_data(invocation_context, event_id, data: list[types.Content])
+* Sets attributes like gen_ai.system = 'gcp.vertex.agent' and various gcp.vertex.agent.* attributes on spans.
+10. Examples (google.adk.examples)
+Manages few-shot examples for prompting.
+* Example(input: types.Content, output: list[types.Content]): Represents a single few-shot example.
+* BaseExampleProvider: Abstract class for providing examples.
+   * get_examples(query: str): Returns list[Example].
+* VertexAiExampleStore(BaseExampleProvider): Fetches examples from a Vertex AI Example Store.
+   * __init__(examples_store_name: str).
+* example_util:
+   * convert_examples_to_text(examples: list[Example], model: Optional[str]): Converts examples into a string format suitable for system instructions.
+   * build_example_si(examples: ExamplesUnion, query: str, model: Optional[str]): Builds the complete system instruction string from examples.
+11. Authentication (google.adk.auth)
+Handles authentication requirements for tools.
+* AuthCredentialTypes(Enum): Defines supported auth types (API_KEY, HTTP, OAUTH2, etc.).
+* AuthCredential: Pydantic model for various credential types.
+* AuthConfig: Configuration passed from a tool when it requires authentication. Contains auth_scheme (OpenAPI security scheme) and credential details.
+* AuthHandler(auth_config: AuthConfig):
+   * Manages the OAuth2 flow (generating auth URIs, exchanging codes for tokens).
+   * Stores/retrieves credentials from session state (ctx.state).
+   * generate_auth_request(): Prepares AuthConfig for the client (e.g., UI) to initiate auth.
+* auth_preprocessor: An LLM request processor (_AuthLlmRequestProcessor) that:
+   * Detects auth-related function calls (e.g., REQUEST_EUC_FUNCTION_CALL_NAME).
+   * Parses auth responses from user events.
+   * Resumes tool calls that were pending authentication.
+12. Code Execution (google.adk.code_executors)
+Allows agents to execute code.
+* BaseCodeExecutor: Abstract class for code execution.
+   * execute_code(invocation_context: InvocationContext, code_execution_input: CodeExecutionInput): Executes code. Returns CodeExecutionResult.
+   * Configuration: code_block_delimiters, execution_result_delimiters, stateful, optimize_data_file, error_retry_attempts.
+* BuiltInCodeExecutor(BaseCodeExecutor): Leverages the LLM's native code execution capabilities by using the built_in_code_execution tool.
+* CodeExecutionInput(code, input_files, execution_id).
+* CodeExecutionResult(stdout, stderr, output_files).
+* File(name, content, mime_type).
+* CodeExecutorContext: Manages state related to code execution within a session (e.g., execution ID, error counts, processed files).
+* The _code_execution flow processor in google.adk.flows.llm_flows integrates this:
+   * Pre-processor: Extracts inline files from user messages, replaces them with placeholders, and can run pre-processing code (e.g., explore_df for CSVs if optimize_data_file is true).
+   * Post-processor: Extracts code blocks from LLM responses, executes them using the configured BaseCodeExecutor, and formats the results back for the LLM.
+13. Planners (google.adk.planners)
+Enable agents to create and follow multi-step plans.
+* BasePlanner: Abstract class for planning strategies.
+   * build_planning_instruction(readonly_context: ReadonlyContext, llm_request: LlmRequest): Generates system instructions to guide the LLM in planning.
+   * process_planning_response(callback_context: CallbackContext, response_parts: list[types.Part]): Processes the LLM's response, potentially extracting or modifying plan-related parts.
+* BuiltInPlanner(BasePlanner): Uses the LLM's native planning/thinking capabilities.
+   * thinking_config: types.ThinkingConfig: Configuration for the model's built-in thinking. Applied to LlmRequest.config.
+* PlanReActPlanner(BasePlanner): Implements a ReAct-style planning loop by providing specific instructions to the LLM, expecting responses tagged with /*PLANNING*/, /*REASONING*/, /*ACTION*/, /*FINAL_ANSWER*/. It marks thought parts in the LLM response.
+14. LLM Flows (google.adk.flows.llm_flows)
+Internal mechanism orchestrating LlmAgent behavior. An LlmAgent uses either SingleFlow or AutoFlow.
+* BaseLlmFlow: Abstract base for LLM interaction logic.
+   * Manages a list of request_processors and response_processors.
+   * run_async(invocation_context): Main loop for LLM calls and tool handling.
+   * run_live(invocation_context): Variant for live/streaming interactions.
+   * _preprocess_async: Applies request_processors.
+   * _call_llm_async: Invokes the LLM, handling before_model_callback and after_model_callback.
+   * _postprocess_async: Applies response_processors and handles function calls.
+* SingleFlow(BaseLlmFlow): Default flow for an LlmAgent.
+   * Includes processors for: basic (model/config setup), identity (agent persona), instructions (system prompts), state (state injection), contents (history building), examples (few-shot), _nl_planning, _code_execution, and auth_preprocessor.
+* AutoFlow(SingleFlow): Extends SingleFlow by adding the agent_transfer request processor, enabling the agent to delegate tasks to other agents.
+* Key Processors:
+   * basic.py: Initializes LlmRequest with model, GenerateContentConfig, output_schema, and live connect settings.
+   * identity.py: Adds a basic "You are an agent named X..." instruction.
+   * instructions.py: Appends agent.instruction and agent.global_instruction to LlmRequest.
+   * state.py: If agent.state_in_instruction is true, serializes session.state and adds it to system instructions.
+   * contents.py: Constructs the LlmRequest.contents list from session.events, filtering by branch, converting foreign agent messages, and reordering function call/response pairs.
+   * examples.py: Uses example_util to add few-shot examples to system instructions.
+   * functions.py: Core logic for handling Part.function_call and Part.function_response. Manages client-side IDs for function calls, identifies long-running tools, and can generate auth events.
+   * agent_transfer.py: Adds instructions about available agents and the transfer_to_agent tool.
+   * _nl_planning.py: Integrates the configured BasePlanner.
+   * _code_execution.py: Integrates the configured BaseCodeExecutor.
+   * auth_preprocessor.py (in google.adk.auth): Handles resumption of tool calls after an authentication step.
+   * audio_transcriber.py: Utility to transcribe audio blobs using Cloud Speech-to-Text, used in run_live if model's native input transcription is not used.
+Getting Started (Conceptual)
+1. Define Agent(s): Create instances of LlmAgent (or other BaseAgent subclasses).
+   * Set name, description.
+   * Configure model, instruction.
+   * Add tools, sub_agents, planner, code_executor as needed.
+2. Initialize Services:
+   * session_service = InMemorySessionService() (or a persistent one).
+   * artifact_service = InMemoryArtifactService() (or GcsArtifactService).
+   * memory_service = InMemoryMemoryService() (or VertexAiRagMemoryService).
+3. Create a Runner:
+   * runner = Runner(app_name="my_app", agent=root_agent, session_service=session_service, ...)
+   * Or, for quick tests: runner = InMemoryRunner(agent=root_agent).
+4. Run the Agent:
+   * async for event in runner.run_async(user_id="user123", session_id="session_abc", new_message=types.Content(parts=[types.Part.from_text("Hello agent")]), run_config=RunConfig()):
+      * Process event objects (e.g., display agent responses, handle actions).
+5. For Live Interactions:
+   * Use runner.run_live(...) and provide a LiveRequestQueue.
+   * Send audio/video via live_request_queue.send_realtime(blob) or text via live_request_queue.send_content(content).
+This documentation provides a foundational understanding of the SDK's components and their interactions. Refer to individual Python files for more specific details on class methods and parameters.

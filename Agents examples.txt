@@ -1,0 +1,426 @@
+﻿ADK Example Projects: Structure and ADK Usage
+This document provides a detailed breakdown of various example projects built using the Agent Development Kit (ADK). For each project, it outlines its structure, the ADK components utilized, and how these components are configured and interact.
+Table of Contents
+1. Brand Search Optimization (brand-search-optimization)
+2. Data Science (data-science)
+3. Hello World Multi-Agent (hello_world_ma)
+4. Hello World Ollama (hello_world_ollama)
+5. Human in Loop (human_in_loop)
+6. MCP SSE Agent (mcp_sse_agent)
+7. MCP Stdio Server Agent (mcp_stdio_server_agent)
+8. Memory Agent (memory)
+9. Quickstart Agent (quickstart)
+10. RAG Agent (RAG)
+11. Workflow Agent Sequence (workflow_agent_seq)
+1. Brand Search Optimization (brand-search-optimization)
+Purpose: This project aims to enhance product data for retail websites by generating keywords, searching a website (Google Shopping in the example), analyzing top search results, and providing suggestions to enrich product titles. It demonstrates a multi-agent setup with web crawling and BigQuery data connection capabilities.
+Project Structure:
+* brand_search_optimization/: Main package for the agent.
+   * agent.py: Defines the root agent and its sub-agents.
+   * prompt.py: Contains the prompt for the root agent.
+   * shared_libraries/constants.py: Stores shared constants like model name, project ID, etc.
+   * sub_agents/: Contains sub-agents, each with its own agent.py and prompt.py.
+      * comparison/: Sub-agent for comparing product titles.
+      * keyword_finding/: Sub-agent for finding keywords based on product data.
+      * search_results/: Sub-agent for web browsing and extracting search results.
+   * tools/bq_connector.py: Defines a tool for connecting to BigQuery.
+* deployment/: Scripts for deployment, data setup, and running/testing.
+* eval/: Evaluation scripts and data.
+* tests/: Unit tests and example interactions.
+ADK Usage:
+* Agent (google.adk.agents.llm_agent.Agent): Used extensively to define the root agent and all sub-agents.
+   * Root Agent (brand_search_optimization.agent.root_agent):
+      * name: constants.AGENT_NAME (resolved to "brand_search_optimization").
+      * description: constants.DESCRIPTION ("A helpful assistant for brand search optimization.").
+      * model: constants.MODEL (e.g., "gemini-2.0-flash-001").
+      * instruction: Defined in brand_search_optimization.prompt.ROOT_PROMPT. This prompt outlines a multi-step process: gather brand name, call keyword_finding_agent, then search_results_agent, and finally comparison_root_agent.
+      * sub_agents:
+         * keyword_finding_agent
+         * search_results_agent
+         * comparison_root_agent
+   * Keyword Finding Sub-Agent (brand_search_optimization.sub_agents.keyword_finding.agent.keyword_finding_agent):
+      * name: "keyword_finding_agent".
+      * description: "A helpful agent to find keywords".
+      * model: constants.MODEL.
+      * instruction: Defined in brand_search_optimization.sub_agents.keyword_finding.prompt.KEYWORD_FINDING_AGENT_PROMPT. Instructs the agent to use the get_product_details_for_brand tool, analyze product data, group keywords, and rank them.
+      * tools: [bq_connector.get_product_details_for_brand].
+   * Search Results Sub-Agent (brand_search_optimization.sub_agents.search_results.agent.search_results_agent):
+      * name: "search_results_agent".
+      * description: "Get top 3 search results info for a keyword using web browsing".
+      * model: constants.MODEL.
+      * instruction: Defined in brand_search_optimization.sub_agents.search_results.prompt.SEARCH_RESULT_AGENT_PROMPT. Guides the agent to ask for a website, navigate, search for a keyword, and extract titles of top 3 products.
+      * tools: A suite of web browsing tools implemented using selenium:
+         * go_to_url(url: str)
+         * take_screenshot(tool_context: ToolContext) (uses tool_context.save_artifact)
+         * find_element_with_text(text: str)
+         * click_element_with_text(text: str)
+         * enter_text_into_element(text_to_enter: str, element_id: str)
+         * scroll_down_screen()
+         * get_page_source()
+         * load_artifacts_tool (from google.adk.tools.load_artifacts_tool)
+         * analyze_webpage_and_determine_action(page_source: str, user_task: str, tool_context: ToolContext) (This tool itself is an LLM call to decide the next web action).
+   * Comparison Root Sub-Agent (brand_search_optimization.sub_agents.comparison.agent.comparison_root_agent):
+      * name: "comparison_root_agent".
+      * description: "A helpful agent to compare titles".
+      * model: constants.MODEL.
+      * instruction: Defined in brand_search_optimization.sub_agents.comparison.prompt.COMPARISON_ROOT_AGENT_PROMPT. Instructs this agent to route between comparison_generator_agent and comparison_critic_agent in a loop until the critic is satisfied.
+      * sub_agents:
+         * comparison_generator_agent
+         * comparison_critic_agent
+   * Comparison Generator Sub-Agent (brand_search_optimization.sub_agents.comparison.agent.comparison_generator_agent):
+      * name: "comparison_generator_agent".
+      * description: "A helpful agent to generate comparison.".
+      * model: constants.MODEL.
+      * instruction: prompt.COMPARISON_AGENT_PROMPT. Tasks it with comparing titles from search_results_agent with the brand's product titles, showing a side-by-side comparison, and suggesting improvements.
+   * Comparison Critic Sub-Agent (brand_search_optimization.sub_agents.comparison.agent.comparison_critic_agent):
+      * name: "comparison_critic_agent".
+      * description: "A helpful agent to critique comparison.".
+      * model: constants.MODEL.
+      * instruction: prompt.COMPARISON_CRITIC_AGENT_PROMPT. Tasks it with critiquing the comparison and providing suggestions, or indicating satisfaction.
+* Tools (google.adk.tools):
+   * Custom Tools:
+      * bq_connector.get_product_details_for_brand(tool_context: ToolContext): Takes a brand name (from tool_context.user_content), queries a BigQuery table ({PROJECT}.{DATASET_ID}.{TABLE_ID}) for product title, description, and attributes for that brand, and returns the results as a markdown table.
+      * Web browsing tools in search_results/agent.py (listed above) use selenium to interact with web pages.
+   * ADK Built-in Tools:
+      * load_artifacts_tool: Used by search_results_agent likely after take_screenshot to load the image data for analysis or display.
+* ToolContext (google.adk.tools.tool_context.ToolContext):
+   * Passed to take_screenshot and get_product_details_for_brand to allow artifact saving and access to user input respectively.
+* Prompts: Each agent and sub-agent has a dedicated prompt defining its role, workflow, and constraints. The root agent's prompt orchestrates the flow between sub-agents.
+* Constants (shared_libraries/constants.py): Centralizes configuration like model names, GCP project/location, BigQuery dataset/table IDs, and a flag (DISABLE_WEB_DRIVER) for testing. These are loaded from environment variables using dotenv.
+* Deployment and Evaluation: The deployment/ and eval/ directories suggest usage of ADK's deployment features (to Vertex AI Agent Engine via AdkApp) and evaluation framework (AgentEvaluator).
+Key ADK Concepts Illustrated:
+* Hierarchical multi-agent systems (Agent with sub_agents).
+* Tool definition and usage (custom functions and ADK built-ins).
+* Prompt engineering for complex workflows and agent routing.
+* Use of ToolContext for tools to interact with the ADK environment.
+* Configuration management via constants and environment variables.
+* Integration with external services (BigQuery, web browsing via Selenium).
+* Artifact management (save_artifact).
+2. Data Science (data-science)
+Purpose: This project demonstrates a multi-agent system for advanced data analysis and machine learning tasks. It can interact with BigQuery (NL2SQL), perform Python-based data analysis (NL2Py via Code Interpreter), and leverage BigQuery ML (BQML), including RAG for BQML documentation.
+Project Structure:
+* data_science/: Main package for the agent.
+   * agent.py: Defines the root "Data Science Multi-Agent" and its setup_before_agent_call callback.
+   * prompts.py: Contains instruction prompts for the root agent.
+   * tools.py: Defines tools call_db_agent and call_ds_agent which are AgentTool wrappers.
+   * sub_agents/:
+      * analytics/: Python data science agent.
+         * agent.py: Defines data_science_agent using VertexAiCodeExecutor.
+         * prompts.py: Prompts for the analytics agent.
+      * bigquery/: Database interaction agent.
+         * agent.py: Defines database_agent.
+         * prompts.py: Prompts for the BigQuery agent.
+         * tools.py: Tools for BigQuery interaction (initial_bq_nl2sql, run_bigquery_validation, get_database_settings).
+         * chase_sql/: Implements CHASE-SQL algorithm for advanced NL2SQL.
+            * chase_db_tools.py: CHASE-SQL specific version of initial_bq_nl2sql.
+            * llm_utils.py: Utilities for LLM calls (GeminiModel with retry logic).
+            * sql_postprocessor/: Translates and corrects SQL.
+      * bqml/: BigQuery ML agent.
+         * agent.py: Defines bq_ml_agent.
+         * prompts.py: Prompts for the BQML agent.
+         * tools.py: Tools for BQML (check_bq_models, execute_bqml_code, rag_response).
+   * utils/: Utility scripts for data setup (e.g., create_bq_table.py, reference_guide_RAG.py).
+* deployment/: Scripts for deploying the agent to Vertex AI Agent Engine.
+* eval/: Evaluation scripts and data.
+* tests/: Unit tests.
+ADK Usage:
+* Agent (google.adk.agents.Agent): Used for the root agent and all sub-agents.
+   * Root Agent (data_science.agent.root_agent):
+      * name: "db_ds_multiagent".
+      * model: os.getenv("ROOT_AGENT_MODEL") (e.g., "gemini-2.0-flash-001").
+      * instruction: From data_science.prompts.return_instructions_root(). This complex prompt guides the agent to understand user intent, classify if it's SQL, Python analysis, or BQML, and route to the appropriate tool/sub-agent. Emphasizes schema adherence and not fabricating SQL/Python code.
+      * global_instruction: Sets a persona "Data Science and Data Analytics Multi Agent System" and includes the current date.
+      * sub_agents: [bqml_agent]. Note: db_agent and ds_agent are called via AgentTool.
+      * tools:
+         * call_db_agent (custom AgentTool wrapping db_agent)
+         * call_ds_agent (custom AgentTool wrapping ds_agent)
+         * load_artifacts (from google.adk.tools)
+      * before_agent_callback: setup_before_agent_call. This callback dynamically updates the root agent's instruction with the BigQuery DDL schema by calling get_bq_database_settings and storing it in callback_context.state.
+      * generate_content_config: Sets temperature=0.01.
+   * Analytics Sub-Agent (DS Agent - data_science.sub_agents.analytics.agent.root_agent):
+      * name: "data_science_agent".
+      * model: os.getenv("ANALYTICS_AGENT_MODEL").
+      * instruction: From data_science.sub_agents.analytics.prompts.return_instructions_ds(). Guides the agent to assist with Python data analysis using a Colab-like environment, emphasizing code generation, output visibility, and statefulness. It lists pre-imported libraries.
+      * code_executor: VertexAiCodeExecutor(optimize_data_file=True, stateful=True). This enables the agent to generate and execute Python code.
+   * BigQuery Sub-Agent (DB Agent - data_science.sub_agents.bigquery.agent.database_agent):
+      * name: "database_agent".
+      * model: os.getenv("BIGQUERY_AGENT_MODEL").
+      * instruction: From data_science.sub_agents.bigquery.prompts.return_instructions_bigquery(). Instructs the agent to act as a SQL expert for BigQuery, generate SQL from natural language, validate it, and return results in JSON format.
+      * tools:
+         * initial_bq_nl2sql (from tools.py or chase_sql/chase_db_tools.py depending on NL2SQL_METHOD env var). This tool itself uses an LLM call to convert NL to SQL.
+         * run_bigquery_validation (from tools.py). This tool cleans up SQL and runs it against BigQuery (initially as a dry run, then executes if valid).
+      * before_agent_callback: setup_before_agent_call (similar to root, ensures DB settings are in state).
+      * generate_content_config: Sets temperature=0.01.
+   * BQML Sub-Agent (data_science.sub_agents.bqml.agent.root_agent):
+      * name: "bq_ml_agent".
+      * model: os.getenv("BQML_AGENT_MODEL").
+      * instruction: From data_science.sub_agents.bqml.prompts.return_instructions_bqml(). Guides the agent to assist with BQML tasks, use RAG for documentation, check existing models, generate BQML code, get user approval, and then execute.
+      * before_agent_callback: setup_before_agent_call (ensures DB and BQML RAG corpus info is in context/instruction).
+      * tools:
+         * execute_bqml_code(bqml_code: str, project_id: str, dataset_id: str): Executes BQML.
+         * check_bq_models(dataset_id: str): Lists BQML models in a dataset.
+         * call_db_agent (custom AgentTool wrapping db_agent): For data exploration needed by BQML tasks.
+         * rag_response(query: str): Queries the BQML RAG corpus (set up via reference_guide_RAG.py).
+* Tools (google.adk.tools):
+   * AgentTool (google.adk.tools.agent_tool.AgentTool): Used in data_science/tools.py to wrap db_agent and ds_agent, allowing the root agent to call them as tools.
+      * call_db_agent(question: str, tool_context: ToolContext)
+      * call_ds_agent(question: str, tool_context: ToolContext)
+   * Custom Tools:
+      * In bigquery/tools.py:
+         * initial_bq_nl2sql: Converts natural language to SQL using an LLM call with a specific prompt template (either DC_PROMPT_TEMPLATE or QP_PROMPT_TEMPLATE from chase_sql).
+         * run_bigquery_validation: Validates and runs SQL against BigQuery.
+      * In bqml/tools.py:
+         * check_bq_models: Lists BQML models.
+         * execute_bqml_code: Runs BQML queries.
+         * rag_response: Queries a Vertex AI RAG corpus.
+   * ADK Built-in Tools:
+      * load_artifacts: Available to the root agent.
+* CodeExecutor (google.adk.code_executors.VertexAiCodeExecutor):
+   * Used by the data_science_agent (analytics sub-agent) to execute Python code for data analysis.
+   * Configured with optimize_data_file=True and stateful=True.
+* CallbackContext (google.adk.agents.callback_context.CallbackContext):
+   * Used in setup_before_agent_call for both the root agent and the BQML agent to dynamically modify agent instructions and manage session state (e.g., storing database schema, RAG corpus name).
+* Prompts: Extensive use of dynamically constructed prompts, often incorporating schema information or RAG results.
+* Environment Variables: Heavily reliant on .env file for configuration (GCP project, location, API keys, model names, BigQuery dataset/project IDs, RAG corpus name, Code Interpreter extension name).
+* RAG (vertexai.rag): The BQML agent uses Vertex AI RAG, set up by utils/reference_guide_RAG.py, which creates a RAG corpus from BQML documentation.
+Key ADK Concepts Illustrated:
+* Complex multi-agent orchestration with specialized sub-agents.
+* AgentTool for inter-agent communication as tool calls.
+* Dynamic prompt construction using CallbackContext and session state in before_agent_callback.
+* Use of VertexAiCodeExecutor for Python code execution within an agent.
+* Integration with external Google Cloud services: BigQuery, Vertex AI RAG, Vertex AI Extensions (Code Interpreter).
+* Advanced NL2SQL techniques (CHASE-SQL).
+* Sophisticated state management within ToolContext and CallbackContext to pass data between agent turns and tool calls (e.g., tool_context.state["query_result"]).
+3. Hello World Multi-Agent (hello_world_ma)
+Purpose: A simple demonstration of a multi-agent system where a root agent delegates tasks (rolling a die, checking for prime numbers) to specialized sub-agents.
+Project Structure:
+* agent.py: Defines the root agent and two sub-agents (roll_agent, prime_agent) along with their respective tools.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Root Agent (hello_world_ma.agent.root_agent):
+      * name: "root_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful assistant that can roll dice and check if numbers are prime. You delegate rolling dice tasks to the roll_agent and prime checking tasks to the prime_agent...".
+      * global_instruction: "You are DicePrimeBot, ready to roll dice and check prime numbers."
+      * sub_agents: [roll_agent, prime_agent].
+      * tools: [example_tool (an instance of ExampleTool)].
+      * generate_content_config: Includes safety settings to allow dice rolling content.
+   * Roll Sub-Agent (hello_world_ma.agent.roll_agent):
+      * name: "roll_agent".
+      * description: "Handles rolling dice of different sizes.".
+      * instruction: "You are responsible for rolling dice... call the roll_die tool...".
+      * tools: [roll_die(sides: int) -> int].
+      * generate_content_config: Includes safety settings.
+   * Prime Check Sub-Agent (hello_world_ma.agent.prime_agent):
+      * name: "prime_agent".
+      * description: "Handles checking if numbers are prime.".
+      * instruction: "You are responsible for checking whether numbers are prime... call the check_prime tool...".
+      * tools: [check_prime(nums: list[int]) -> str].
+      * generate_content_config: Includes safety settings.
+* Tools (google.adk.tools):
+   * Custom Tools:
+      * roll_die(sides: int) -> int: A simple Python function that returns a random integer.
+      * check_prime(nums: list[int]) -> str: A Python function that checks primality.
+   * ExampleTool (google.adk.tools.example_tool.ExampleTool):
+      * example_tool is initialized with a list of input/output examples to guide the root agent's behavior, especially in complex scenarios like "Roll a 10-sided die and check if it's prime." This demonstrates how ExampleTool can be used for few-shot prompting or guiding multi-step tool use.
+Key ADK Concepts Illustrated:
+* Basic multi-agent setup with delegation.
+* Defining simple Python functions as tools.
+* Using ExampleTool to provide few-shot examples to an agent.
+* Setting global_instruction for a consistent persona across agents.
+* Configuring generate_content_config for safety settings.
+4. Hello World Ollama (hello_world_ollama)
+Purpose: Demonstrates how to use a locally running Ollama model with the ADK.
+Project Structure:
+* agent.py: Defines the ollama_agent.
+* main.py: Example script to run the ollama_agent.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Ollama Agent (hello_world_ollama.agent.ollama_agent):
+      * name: "ollama_agent".
+      * model: An instance of LiteLlm.
+         * LiteLlm(model="ollama/mistral", api_base="http://localhost:11434")
+         * This configuration tells ADK to use the LiteLlm wrapper, targeting the "ollama/mistral" model, and specifies the API endpoint for the local Ollama server.
+      * instruction: "You are Dolphin, an uncensored and unbiased AI assistant."
+* LiteLlm (google.adk.models.LiteLlm):
+   * This ADK component is used to interface with models supported by the litellm library, including local Ollama models. The api_base parameter is crucial for pointing to the Ollama server.
+* Running the Agent (main.py):
+   * Uses InMemoryRunner from google.adk.runners to execute the agent.
+   * Demonstrates a simple interaction loop: get user input, run the agent, print the response.
+Key ADK Concepts Illustrated:
+* Using LiteLlm to connect to non-Google models, specifically local Ollama instances.
+* Configuring LiteLlm with model name (including provider prefix like "ollama/") and api_base.
+* Basic agent execution using InMemoryRunner.
+5. Human in Loop (human_in_loop)
+Purpose: Illustrates how to incorporate a human verification step into an agent's workflow using callbacks.
+Project Structure:
+* agent.py: Defines the root_agent and its callback function verify_tool_call.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Root Agent (human_in_loop.agent.root_agent):
+      * name: "root_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful assistant. You can use the example_tool to get specific information."
+      * tools: [ExampleTool() (a simple placeholder tool)].
+      * after_model_callback: verify_tool_call.
+* Callbacks (google.adk.agents.llm_agent.AfterModelCallback):
+   * verify_tool_call(callback_context: CallbackContext, llm_response: LlmResponse) -> Optional[LlmResponse]:
+      * This function is triggered after the LLM generates a response.
+      * It checks if the llm_response contains a function call (tool use).
+      * If a function call exists:
+         * It prompts the human user (via input()) to approve or deny the tool call.
+         * If denied, it modifies the llm_response to instruct the LLM to answer without using the tool, effectively overriding the LLM's decision.
+         * The callback_context.state could be used here to store information about the verification process if needed, though it's not explicitly used in this simple example.
+      * Returns the (potentially modified) LlmResponse or None.
+* CallbackContext (google.adk.agents.callback_context.CallbackContext):
+   * Passed to the verify_tool_call callback, providing access to session state and invocation details.
+Key ADK Concepts Illustrated:
+* Using after_model_callback to intercept and modify LLM responses before tool execution.
+* Implementing a human-in-the-loop verification step.
+* Dynamically altering an agent's behavior based on external (human) input during a turn.
+6. MCP SSE Agent (mcp_sse_agent)
+Purpose: This example demonstrates a multi-turn conversational agent that uses Server-Sent Events (SSE) for streaming responses. It interacts with a simple filesystem server to list files.
+Project Structure:
+* agent.py: Defines the mcp_sse_agent.
+* filesystem_server.py: A simple Flask server that exposes an endpoint to list files in a directory. The agent communicates with this server.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * MCP SSE Agent (mcp_sse_agent.agent.mcp_sse_agent):
+      * name: "mcp_sse_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful agent that can list files in a directory by calling the list_files tool."
+      * tools: [list_files(directory: str)].
+      * run_config: RunConfig(streaming_mode=StreamingMode.SSE). This is key for enabling SSE streaming.
+* Tools:
+   * list_files(directory: str) -> str:
+      * This function makes an HTTP GET request to the filesystem_server.py (running on http://127.0.0.1:8080/list_files) with the specified directory.
+      * Returns the list of files or an error message.
+* RunConfig (google.adk.agents.run_config.RunConfig):
+   * Used to set streaming_mode=StreamingMode.SSE, which instructs the ADK runner to stream the agent's responses using Server-Sent Events. This is relevant when the agent is run via adk web or a similar ADK-provided server.
+Key ADK Concepts Illustrated:
+* Configuring an agent for SSE streaming using RunConfig(streaming_mode=StreamingMode.SSE).
+* Defining a tool that interacts with an external HTTP service.
+* Demonstrates how a conversational agent can maintain context over multiple turns while streaming its output.
+7. MCP Stdio Server Agent (mcp_stdio_server_agent)
+Purpose: This example showcases an agent designed to be run as a subprocess, communicating via standard input/output (stdio). This is a pattern for integrating ADK agents with other systems or parent processes that manage them.
+Project Structure:
+* agent.py: Defines the mcp_stdio_server_agent.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * MCP Stdio Server Agent (mcp_stdio_server_agent.agent.mcp_stdio_server_agent):
+      * name: "mcp_stdio_server_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful agent that can list files in a directory by calling the list_files tool." (Similar to the SSE agent).
+      * tools: [list_files(directory: str)].
+* Tools:
+   * list_files(directory: str) -> str:
+      * Makes an HTTP GET request to an external filesystem server (presumably the same one as in mcp_sse_agent, http://127.0.0.1:8080/list_files).
+* Running via adk run --stdio:
+   * The primary ADK aspect here is the invocation method. This agent is intended to be run using adk run mcp_stdio_server_agent --stdio.
+   * When run with --stdio, the ADK framework handles JSON-RPC communication over stdin/stdout, allowing a parent process to send requests (like user messages) and receive events (like agent responses).
+Key ADK Concepts Illustrated:
+* Demonstrates the stdio server mode of adk run, enabling ADK agents to be managed as subprocesses.
+* Shows an agent that, while simple in its own logic, is designed for a specific ADK invocation pattern.
+8. Memory Agent (memory)
+Purpose: This example demonstrates how an agent can use the ADK's memory service to recall information from previous sessions.
+Project Structure:
+* agent.py: Defines the memory_agent.
+* main.py: Script to run the agent and interact with it, showing how memory is persisted and retrieved across different runs (if a persistent memory service is configured, though InMemoryMemoryService is used by default with InMemoryRunner).
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Memory Agent (memory.agent.memory_agent):
+      * name: "memory_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful agent that remembers previous conversations."
+      * tools: [ExampleTool() with examples showing recall]. The examples guide the LLM to understand when and how to phrase questions or statements that imply memory usage.
+      * Implicit Memory Usage: The agent doesn't explicitly call a "search_memory" tool. Instead, the ADK's LlmFlow (specifically, the memory_processor within it, if configured and if the agent's memory_config is set) would automatically augment the LLM prompt with relevant information retrieved from the BaseMemoryService before the LLM call. The provided code doesn't show explicit memory_config on the agent, so this example might rely on the default behavior where the full history (including past sessions if the SessionService and MemoryService persist and link them) is available, or the ExampleTool is guiding the LLM to "act" as if it remembers.
+         * Correction based on typical ADK structure: For explicit RAG-like memory, an agent would typically have a memory_config pointing to a BaseMemoryService and potentially a tool to query it, or the flow would inject context. The main.py shows an InMemoryRunner which uses InMemoryMemoryService. The Runner itself calls memory_service.add_session_to_memory(session) after an invocation. The retrieval part is usually handled by a request processor in the ADK flow if the agent is configured for it.
+* InMemoryRunner (google.adk.runners.InMemoryRunner):
+   * Used in main.py. It initializes InMemorySessionService and InMemoryMemoryService.
+   * The InMemoryMemoryService will store session events. If the same InMemoryRunner instance is used across interactions within the same Python process execution, the InMemoryMemoryService will retain data. For persistence across process executions, a persistent BaseMemoryService (like VertexAiRagMemoryService) would be needed.
+Key ADK Concepts Illustrated:
+* Interaction with BaseMemoryService (implicitly via InMemoryRunner and its InMemoryMemoryService).
+* The Runner's role in saving session events to memory via memory_service.add_session_to_memory().
+* The concept of agents having access to past interactions, although the explicit retrieval mechanism by the agent itself (beyond history) isn't detailed in agent.py but is a general ADK capability.
+9. Quickstart Agent (quickstart)
+Purpose: A very basic "hello world" style agent that uses a simple tool.
+Project Structure:
+* agent.py: Defines root_agent and a simple add tool.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Root Agent (quickstart.agent.root_agent):
+      * name: "root_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful agent. You can use tools."
+      * tools: [add(a: int, b: int)].
+* Tools:
+   * add(a: int, b: int) -> int: A simple Python function that adds two integers. ADK automatically infers the schema from type hints.
+Key ADK Concepts Illustrated:
+* The most basic structure of an ADK agent.
+* Defining a simple Python function and providing it directly to the tools list of an Agent. ADK handles wrapping it into a FunctionTool.
+* Implicit schema generation for tools from Python type hints.
+10. RAG Agent (RAG)
+Purpose: This project demonstrates a Retrieval Augmented Generation (RAG) agent that uses Vertex AI Vector Search (formerly Matching Engine) and a RAG corpus for grounding its responses.
+Project Structure:
+* rag/: Main package for the agent.
+   * agent.py: Defines the root_agent and the VertexAIRAGTool.
+   * prompts.py: Contains prompts for the agent.
+   * shared_libraries/prepare_corpus_and_data.py: Script to set up the RAG corpus and public dataset (example: "thelook_ecommerce").
+* deployment/: Scripts for deploying and running the agent.
+* eval/: Evaluation scripts and data.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Root Agent (rag.agent.root_agent):
+      * name: "rag_agent".
+      * instruction: From rag.prompts.AGENT_INSTRUCTION. This prompt guides the agent to use the RAG tool to answer questions based on the provided corpus.
+      * tools: [VertexAIRAGTool()].
+      * generate_content_config: Includes temperature=0.0.
+* Tools (google.adk.tools):
+   * VertexAIRAGTool (rag.agent.VertexAIRAGTool): This is a custom BaseTool.
+      * name: "vertex_ai_rag_tool".
+      * description: "Use this tool to get context to answer user questions."
+      * input_schema: VertexAIRAGToolInput(query: str).
+      * execute(args: dict, tool_context: ToolContext):
+         * Retrieves project_id, location, and rag_corpus_id from environment variables.
+         * Uses vertexai.rag.retrieval_query() to query the specified RAG corpus.
+         * Returns the retrieved documents as a string.
+* Vertex AI RAG (vertexai.rag):
+   * The core of the RAG functionality. The prepare_corpus_and_data.py script handles:
+      * Creating a RAG corpus (rag.create_corpus()).
+      * Importing files/data into the corpus (rag.import_files()). This example uses data from the BigQuery public dataset "thelook_ecommerce.products".
+   * The VertexAIRAGTool then queries this corpus.
+* Environment Variables: Relies on .env.example (copied to .env) for PROJECT_ID, LOCATION, RAG_CORPUS_ID, RAG_BUCKET_NAME, RAG_BUCKET_PATH, and BQ_PUBLIC_DATASET_FOR_RAG.
+Key ADK Concepts Illustrated:
+* Creating a custom BaseTool for a specific RAG application.
+* Integrating with Vertex AI RAG services.
+* Using environment variables for service configuration.
+* Illustrates a common pattern where a preparatory script (prepare_corpus_and_data.py) sets up external resources (RAG corpus) that the agent's tools then utilize.
+11. Workflow Agent Sequence (workflow_agent_seq)
+Purpose: Demonstrates a sequential workflow where a root agent calls two sub-agents in a specific order to achieve a goal (e.g., finding information and then summarizing it).
+Project Structure:
+* agent.py: Defines the root_agent and its sub-agents info_agent and summary_agent.
+* main.py: Script to run the agent.
+ADK Usage:
+* Agent (google.adk.agents.Agent):
+   * Root Agent (workflow_agent_seq.agent.root_agent):
+      * name: "root_agent".
+      * model: "gemini-1.5-flash".
+      * instruction: "You are a helpful assistant. First, call info_agent to get information. Then, call summary_agent to summarize the information. Finally, present the summary to the user."
+      * sub_agents: [info_agent, summary_agent].
+      * tools: [ExampleTool()].
+   * Info Sub-Agent (workflow_agent_seq.agent.info_agent):
+      * name: "info_agent".
+      * description: "Provides detailed information on a topic."
+      * instruction: "You are an information provider. When asked for information, provide a detailed response. For example, if asked about 'the Dunning-Kruger effect', explain what it is."
+      * tools: [ExampleTool()].
+   * Summary Sub-Agent (workflow_agent_seq.agent.summary_agent):
+      * name: "summary_agent".
+      * description: "Summarizes provided text."
+      * instruction: "You are a summarizer. When given text, provide a concise summary."
+      * tools: [ExampleTool()].
+* Orchestration via Root Agent's Prompt: The root agent's instruction explicitly defines the sequence of calling sub-agents. The ADK's AutoFlow (default for LlmAgent if sub-agents are present and transfers are not disabled) would allow the LLM to follow these instructions to call info_agent then summary_agent.
+* ExampleTool: Used here likely as placeholders or to provide simple guiding examples for each agent's specific task.
+Key ADK Concepts Illustrated:
+* Sequential execution of sub-agents orchestrated by a root agent's prompt.
+* Demonstrates a simple workflow pattern where information is gathered by one agent and processed by another.
+* Use of agent description fields, which the root agent's LLM would use to understand when to delegate to info_agent or summary_agent.

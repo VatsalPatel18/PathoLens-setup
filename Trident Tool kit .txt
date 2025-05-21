@@ -1,0 +1,403 @@
+﻿# 🔱 Trident: Whole-Slide Image Processing Toolkit
+
+**[arXiv](https://arxiv.org/pdf/2502.06750) | [Blog](https://www.linkedin.com/pulse/announcing-new-open-source-tools-accelerate-ai-pathology-andrew-zhang-loape/) | [Documentation](https://trident-docs.readthedocs.io/en/latest/) | [License](#license-and-terms-of-use)**
+
+Trident is a powerful, scalable toolkit for large-scale whole-slide image (WSI) processing in computational pathology. Developed by the [Mahmood Lab](https://faisal.ai/) at Harvard Medical School and Brigham and Women's Hospital, this toolkit facilitates a comprehensive pipeline from raw WSIs to feature extraction, leveraging state-of-the-art foundation models.
+
+## Core Concepts
+
+Trident is built around several key components and concepts:
+
+* **WSI Objects (`OpenSlideWSI`, `CuCIMWSI`, `ImageWSI`)**: Abstractions for reading and interacting with various WSI formats. The `WSIFactory` (`load_wsi`) automatically selects the appropriate reader.
+* **Processor (`Processor`)**: The main orchestrator class that manages the WSI processing workflow, including segmentation, patching, and feature extraction.
+* **Segmentation Models (`segmentation_model_factory`, `HESTSegmenter`, `GrandQCSegmenter`)**: Deep learning models for identifying tissue regions within WSIs and optionally removing artifacts.
+* **Patching (`WSIPatcher`)**: Module for extracting smaller image patches from segmented tissue regions at specified magnifications and sizes.
+* **Patch Encoders (`patch_encoder_models.load.encoder_factory`)**: A collection of foundation models (e.g., UNI, CONCH, Virchow) for extracting deep learning features from image patches.
+* **Slide Encoders (`slide_encoder_models.load.encoder_factory`)**: Models (e.g., Titan, PRISM, GigaPath) that aggregate patch features to produce slide-level embeddings.
+* **Converters (`AnyToTiffConverter`)**: Utilities for converting various image formats to pyramidal TIFFs suitable for WSI analysis.
+* **Input/Output (`trident.IO`)**: Helper functions for managing files, locks for multiprocessing, logging, and HDF5/JSON data handling.
+* **Visualization (`Visualization.visualize_heatmap`)**: Tools for creating and overlaying heatmaps on WSIs, useful for interpreting model outputs.
+
+## Key Features
+
+* **Versatile Tissue Segmentation**: Supports multiple models (HEST, GrandQC) to accurately segment tissue from background in H&E, IHC, and other stained slides. Includes options for artifact and pen mark removal.
+* **Flexible Patch Extraction**: Allows extraction of tissue patches of any specified size and magnification, with configurable overlap.
+* **Extensive Patch Feature Extraction**: Integrates over 20 pre-trained foundation models for generating rich patch embeddings.
+* **Advanced Slide Feature Extraction**: Provides access to 5+ slide-level foundation models for comprehensive WSI representation.
+* **Multi-Format WSI Support**: Natively handles OpenSlide, CuCIM, and PIL-compatible image formats.
+* **Image Conversion**: Includes tools to convert formats like CZI and PNG to pyramidal TIFFs.
+* **Scalability**: Designed for large-scale processing with support for caching and multiprocessing.
+* **Quality Control**: Generates visual outputs (contour overlays, patch grids) for easy quality assessment.
+* **Customizability**: Allows users to integrate their own custom patch and slide encoders.
+
+## Installation
+
+1.  **Create a Conda Environment** (Python 3.10 recommended):
+   ```bash
+   conda create -n "trident" python=3.10
+   conda activate trident
+   ```
+
+2.  **Clone the Repository**:
+   ```bash
+   git clone [https://github.com/mahmoodlab/trident.git](https://github.com/mahmoodlab/trident.git)
+   cd trident
+   ```
+
+3.  **Install Trident**:
+   ```bash
+   pip install -e .
+   ```
+   *Note: Additional packages might be required for specific pre-trained models. Trident will provide error messages with installation instructions if needed.*
+
+## Running Trident
+
+Trident offers command-line scripts for processing single slides or batches of slides.
+
+### 1. Processing a Batch of Slides (`run_batch_of_slides.py`)
+
+This script is the primary interface for large-scale WSI processing.
+
+**Common Usage (All Steps: Segmentation, Patching, Feature Extraction)**:
+```bash
+python run_batch_of_slides.py \
+   --task all \
+   --wsi_dir ./path/to/your/wsis \
+   --job_dir ./output_directory \
+   --patch_encoder uni_v1 \
+   --mag 20 \
+   --patch_size 256 \
+   --gpu 0
+
+Breakdown of Tasks and Key Arguments:
+* --task <task_name>: Specifies the operation to perform.
+   * seg: Tissue segmentation.
+   * coords: Patch coordinate extraction.
+   * feat: Feature extraction (patch or slide level).
+   * cache: Populate WSI cache (see Advanced Features).
+   * all: Perform seg, coords, and feat sequentially.
+* Generic Arguments:
+   * --job_dir <path>: (Required) Directory to store all outputs.
+   * --wsi_dir <path>: (Required) Directory containing WSI files.
+   * --gpu <index>: GPU index to use (default: 0).
+   * --wsi_cache <path>: Optional directory for local WSI caching.
+   * --clear_cache: If wsi_cache is used, delete slides from cache after processing.
+   * --skip_errors: Continue processing other slides if an error occurs on one.
+   * --max_workers <int>: Maximum number of workers for data loading.
+   * --wsi_ext <extensions ...>: List of WSI file extensions to process (e.g., .svs .tif).
+   * --custom_mpp_keys <keys ...>: Custom metadata keys for microns-per-pixel (MPP).
+   * --custom_list_of_wsis <csv_path>: Path to a CSV file specifying a subset of WSIs to process. CSV should have a 'wsi' column (filenames) and optionally an 'mpp' column.
+   * --reader_type <type>: Force a specific WSI reader (openslide, image, cucim). Auto-determined if not set.
+Step 1: Tissue Segmentation (--task seg)
+python run_batch_of_slides.py \
+   --task seg \
+   --wsi_dir ./wsis \
+   --job_dir ./trident_processed \
+   --segmenter hest \
+   --seg_conf_thresh 0.5 \
+   --remove_artifacts \
+   --gpu 0
+
+* --segmenter <model_name>: Segmentation model.
+   * hest (default): DeepLabV3 based model.
+   * grandqc: Fast H&E segmentation.
+* --seg_conf_thresh <float>: Confidence threshold for binarizing segmentation (default: 0.5).
+* --remove_holes: Exclude patches from holes within tissue.
+* --remove_artifacts: Run an additional model to clean artifacts (pen marks, blurs, stains).
+* --remove_penmarks: Specifically remove pen marks.
+* Outputs:
+   * Thumbnails: ./<job_dir>/thumbnails
+   * Contour overlays: ./<job_dir>/contours
+   * GeoJSON contours: ./<job_dir>/contours_geojson (editable in QuPath)
+Step 2: Patch Coordinate Extraction (--task coords)
+python run_batch_of_slides.py \
+   --task coords \
+   --wsi_dir ./wsis \
+   --job_dir ./trident_processed \
+   --mag 20 \
+   --patch_size 256 \
+   --overlap 0 \
+   --min_tissue_proportion 0.1
+
+* --mag <int>: Magnification for patch extraction (e.g., 5, 10, 20, 40).
+* --patch_size <int>: Patch size in pixels at the target magnification (e.g., 256, 512).
+* --overlap <int>: Absolute pixel overlap between patches (default: 0).
+* --min_tissue_proportion <float>: Minimum proportion of tissue a patch must contain (0.0 to 1.0, default: 0.0).
+* --coords_dir <path>: Optional custom directory name (within job_dir) for patch coordinates. Defaults to <mag>x_<patch_size>px_<overlap>px_overlap.
+* Outputs:
+   * Patch coordinates (HDF5): ./<job_dir>/<coords_dir>/patches/<slide_name>_patches.h5
+   * Patch grid visualizations: ./<job_dir>/<coords_dir>/visualization
+Step 3a: Patch Feature Extraction (--task feat with --patch_encoder)
+python run_batch_of_slides.py \
+   --task feat \
+   --wsi_dir ./wsis \
+   --job_dir ./trident_processed \
+   --patch_encoder uni_v1 \
+   --mag 20 \
+   --patch_size 256 \
+   --batch_size 32 \
+   --gpu 0
+
+* --patch_encoder <model_name>: Name of the patch encoder (see table below).
+* --patch_encoder_ckpt_path <path>: Optional path to a local checkpoint for the patch encoder (for offline use).
+* --batch_size <int>: Batch size for feature extraction (default: 32).
+* Outputs:
+   * Patch features (HDF5): ./<job_dir>/<coords_dir>/features_<patch_encoder_name>/<slide_name>.h5 (Shape: (n_patches, feature_dim))
+Step 3b: Slide Feature Extraction (--task feat with --slide_encoder)
+python run_batch_of_slides.py \
+   --task feat \
+   --wsi_dir ./wsis \
+   --job_dir ./trident_processed \
+   --slide_encoder titan \
+   --mag 20 \
+   --patch_size 512 \
+   --batch_size 32 \
+   --gpu 0
+
+* --slide_encoder <model_name>: Name of the slide encoder (see table below). This will automatically use the correct underlying patch encoder.
+* Outputs:
+   * Slide features (HDF5): ./<job_dir>/<coords_dir>/slide_features_<slide_encoder_name>/<slide_name>.h5 (Shape: (feature_dim))
+2. Processing a Single Slide (run_single_slide.py)
+This script processes a single WSI through all steps (segmentation, patching, feature extraction).
+python run_single_slide.py \
+   --slide_path ./path/to/your/slide.svs \
+   --job_dir ./output_directory \
+   --patch_encoder uni_v1 \
+   --mag 20 \
+   --patch_size 256 \
+   --segmenter hest \
+   --gpu 0
+
+* Accepts similar arguments to run_batch_of_slides.py but for a single --slide_path.
+Supported Models
+Trident uses encoder_factory functions in trident.patch_encoder_models.load and trident.slide_encoder_models.load to instantiate models. Local checkpoint paths can be configured in trident/<model_type>_models/local_ckpts.json.
+Patch Encoders
+Patch Encoder
+	Embedding Dim
+	Example Args
+	Hugging Face / Source Link
+	UNI
+	1024
+	--patch_encoder uni_v1 --patch_size 256 --mag 20
+	MahmoodLab/UNI
+	UNI2-h
+	1536
+	--patch_encoder uni_v2 --patch_size 256 --mag 20
+	MahmoodLab/UNI2-h
+	CONCH
+	512
+	--patch_encoder conch_v1 --patch_size 512 --mag 20
+	MahmoodLab/CONCH
+	CONCHv1.5
+	768
+	--patch_encoder conch_v15 --patch_size 512 --mag 20
+	MahmoodLab/conchv1_5
+	Virchow
+	2560
+	--patch_encoder virchow --patch_size 224 --mag 20
+	paige-ai/Virchow
+	Virchow2
+	2560
+	--patch_encoder virchow2 --patch_size 224 --mag 20
+	paige-ai/Virchow2
+	Phikon
+	768
+	--patch_encoder phikon --patch_size 224 --mag 20
+	owkin/phikon
+	Phikon-v2
+	1024
+	--patch_encoder phikon_v2 --patch_size 224 --mag 20
+	owkin/phikon-v2
+	Prov-Gigapath
+	1536
+	--patch_encoder gigapath --patch_size 256 --mag 20
+	prov-gigapath/prov-gigapath
+	H-Optimus-0
+	1536
+	--patch_encoder hoptimus0 --patch_size 224 --mag 20
+	bioptimus/H-optimus-0
+	H-Optimus-1
+	1536
+	--patch_encoder hoptimus1 --patch_size 224 --mag 20
+	bioptimus/H-optimus-1
+	MUSK
+	1024
+	--patch_encoder musk --patch_size 384 --mag 20
+	xiangjx/musk
+	Midnight-12k
+	3072
+	--patch_encoder midnight12k --patch_size 224 --mag 20
+	kaiko-ai/midnight
+	Kaiko
+	384/768/1024
+	--patch_encoder kaiko-vit* --patch_size 256 --mag 20
+	1aurent/kaikoai-models
+	Lunit
+	384
+	--patch_encoder lunit-vits8 --patch_size 224 --mag 20
+	1aurent/vit_small_patch8_224.lunit_dino
+	Hibou
+	1024
+	--patch_encoder hibou_l --patch_size 224 --mag 20
+	histai/hibou-L
+	CTransPath-CHIEF
+	768
+	--patch_encoder ctranspath --patch_size 256 --mag 10
+	(Weights typically bundled or via specific instructions)
+	ResNet50
+	1024
+	--patch_encoder resnet50 --patch_size 256 --mag 20
+	(ImageNet pretrained)
+	Slide Encoders
+Slide Encoder
+	Required Patch Encoder
+	Example Args
+	Hugging Face / Source Link
+	Threads
+	conch_v15
+	--slide_encoder threads --patch_size 512 --mag 20
+	(Coming Soon!)
+	Titan
+	conch_v15
+	--slide_encoder titan --patch_size 512 --mag 20
+	MahmoodLab/TITAN
+	PRISM
+	virchow
+	--slide_encoder prism --patch_size 224 --mag 20
+	paige-ai/Prism
+	CHIEF
+	ctranspath
+	--slide_encoder chief --patch_size 256 --mag 10
+	hms-dbmi/CHIEF
+	GigaPath
+	gigapath
+	--slide_encoder gigapath --patch_size 256 --mag 20
+	prov-gigapath/prov-gigapath
+	Madeleine
+	conch_v1
+	--slide_encoder madeleine --patch_size 256 --mag 10
+	MahmoodLab/madeleine
+	Mean Aggregation
+	Any patch encoder
+	--slide_encoder mean-<patch_encoder_name>
+	(Generic mean pooling over patch features)
+	Advanced Features & Tips
+(Refer to DETAILS.md for more in-depth explanations)
+* Custom Pipelines: Use encoder_factory from trident.patch_encoder_models.load and trident.slide_encoder_models.load to integrate Trident's encoders into your custom PyTorch pipelines.
+from trident.patch_encoder_models.load import encoder_factory as patch_encoder_factory
+patch_enc = patch_encoder_factory("uni_v1")
+
+from trident.slide_encoder_models.load import encoder_factory as slide_encoder_factory
+slide_enc = slide_encoder_factory("titan")
+
+* Caching for Speed: If WSIs are on a network drive, use --wsi_cache <local_path> to copy them locally before processing.
+   * Populate cache: python run_batch_of_slides.py --task cache --wsi_dir <network_dir> --wsi_cache <local_dir>
+   * Run feature extraction using cache: python run_batch_of_slides.py --task feat ... --wsi_cache <local_dir>
+   * Use --clear_cache during feature extraction to delete cached WSIs after use (use with caution).
+   * Multiprocessing: Run multiple instances of run_batch_of_slides.py in parallel. Trident uses lockfiles (<slide_name>.lock) to prevent conflicts. This is most beneficial if GPU is the bottleneck. Monitor CPU/IO load.
+   * Quality Control:
+   * Segmentation contours (images): ./<job_dir>/contours
+   * Patch annotations (images): ./<job_dir>/<patch_dir>/visualization
+Frequently Asked Questions (FAQ)
+   * Q: How do I extract patch embeddings from legacy CLAM coordinates?
+   * A: Use the --coords_dir <path_to_clam_coords_folder> argument in run_batch_of_slides.py when running --task feat.
+python run_batch_of_slides.py --task feat --wsi_dir ./wsis --job_dir ./legacy_dir --patch_encoder uni_v1 --mag 20 --patch_size 256 --coords_dir ./path_to_clam_coords_fp/
+
+      * Q: How do I keep patches corresponding to holes in the tissue?
+      * A: This is the default behavior. To exclude them, use --remove_holes.
+      * Q: I see weird messages when building models using timm. What is happening?
+      * A: Ensure timm==0.9.16 is installed. pip install timm==0.9.16.
+      * Q: How can I use run_single_slide.py and run_batch_of_slides.py in other repos?
+      * A: After installing Trident with pip install -e ., you can import and call their main() functions:
+import sys
+from run_single_slide import main as run_single
+# from run_batch_of_slides import main as run_batch # Similarly for batch
+
+sys.argv = [
+   "run_single_slide", # Script name
+   '--slide_path', "path/to/slide.svs",
+   "--job_dir", 'output_dir/',
+   # ... other arguments ...
+]
+run_single()
+
+         * Q: Unsatisfied with tissue segmentation?
+         * A1: Manually edit the GeoJSON files in ./<job_dir>/contours_geojson using QuPath.
+         * A2: Try a different segmentation model: --segmenter grandqc.
+         * A3: Adjust --seg_conf_thresh (e.g., 0.4 to keep more tissue).
+         * A4: Use --remove_artifacts for cleaner segmentation on H&E slides.
+         * Q: How to process a custom list of WSIs or provide MPP for images without metadata?
+         * A: Use --custom_list_of_wsis <path_to_csv>. The CSV should have a wsi column (filename with extension) and optionally an mpp column. This is required for formats like PNG/JPEG that don't store MPP.
+         * Q: Offline model usage / Cluster without internet?
+         * A:
+         1. Edit JSON registries:
+         * Segmentation: trident/segmentation_models/local_ckpts.json
+         * Patch Encoders: trident/patch_encoder_models/local_ckpts.json
+         * Slide Encoders: trident/slide_encoder_models/local_ckpts.json
+Update these files with local paths to your downloaded model checkpoints.
+            2. Runtime path: Use --patch_encoder_ckpt_path <local_path_to_ckpt> for patch encoders.
+            3. Pre-download all weights: On a machine with internet, use a script (see FAQ in docs/faq.rst for an example run_predownload_weights.py) to download all models to a cache directory. Then, set XDG_CACHE_HOME="<YOUR_CACHE_DIR>" when running Trident on the offline machine.
+Core Modules & Classes (trident/)
+            * Processor.py (Processor class):
+            * Manages the overall WSI processing pipeline.
+            * Initializes with paths, WSI extensions, caching options.
+            * Methods: populate_cache(), run_segmentation_job(), run_patching_job(), run_patch_feature_extraction_job(), run_slide_feature_extraction_job().
+            * wsi_objects/: Contains classes for handling WSIs.
+            * WSI.py (WSI class): Abstract base class for WSI objects. Defines common interface for reading regions, properties, segmentation, patching, and feature extraction.
+            * OpenSlideWSI.py (OpenSlideWSI class): Implements WSI using openslide-python.
+            * CuCIMWSI.py (CuCIMWSI class): Implements WSI using cucim for accelerated reading (GPU).
+            * ImageWSI.py (ImageWSI class): Implements WSI for standard image formats (PNG, JPG) using PIL.
+            * WSIFactory.py (load_wsi function): Detects WSI type and returns the appropriate WSI object instance.
+            * WSIPatcher.py (WSIPatcher class): Handles the logic of generating patch coordinates based on a tissue mask.
+            * WSIPatcherDataset.py (WSIPatcherDataset class): A PyTorch Dataset for efficiently loading patches from a WSI given coordinates, for use in feature extraction.
+            * segmentation_models/:
+            * load.py (segmentation_model_factory, SegmentationModel base class, HESTSegmenter, GrandQCSegmenter, GrandQCArtifactSegmenter): Factory for loading segmentation models and their specific implementations.
+            * patch_encoder_models/:
+            * load.py (encoder_factory, BasePatchEncoder base class, specific encoder classes like UNIInferenceEncoder, Conchv1InferenceEncoder, etc.): Factory for loading various patch encoder models. Each encoder class handles model loading (from Hugging Face or local paths) and defines its forward pass and necessary transforms.
+            * model_zoo/: Contains specific model implementations (e.g., conchv1_5.py, ctran.py).
+            * utils/: Helper utilities for constants (normalization values) and transforms.
+            * slide_encoder_models/:
+            * load.py (encoder_factory, BaseSlideEncoder base class, specific encoder classes like TitanSlideEncoder, PRISMSlideEncoder, MeanSlideEncoder, etc.): Factory for loading slide-level aggregation models.
+            * model_zoo/: Contains specific model implementations (e.g., ABMIL.py).
+            * Converter.py (AnyToTiffConverter class):
+            * Converts various image formats (including CZI, PNG, JPG, and BioFormats-readable types) to pyramidal TIFF format using pyvips.
+            * process_file(input_file, mpp, zoom): Converts a single file.
+            * process_all(input_dir, mpp_csv, downscale_by): Converts all supported files in a directory.
+            * IO.py:
+            * Functions for managing cache directories (get_dir, set_dir).
+            * Internet connection check (has_internet_connection).
+            * Loading local model weights (get_weights_path).
+            * File locking for multiprocessing (create_lock, remove_lock, is_locked).
+            * Logging utilities (update_log).
+            * HDF5 saving/loading (save_h5, read_coords, read_coords_legacy).
+            * Custom JSON encoder (JSONsaver).
+            * Mask to GeoDataFrame conversion (mask_to_gdf, filter_contours).
+            * Utility for determining DataLoader workers (get_num_workers).
+            * Visualization.py:
+            * visualize_heatmap(wsi, scores, coords, patch_size_level0, ...): Generates and saves a heatmap overlay on a WSI thumbnail.
+            * Maintenance.py:
+            * deprecated decorator for marking functions/methods as deprecated.
+License and Terms of Use
+ⓒ Mahmood Lab. This repository is released under the CC-BY-NC-ND 4.0 license. It may only be used for non-commercial, academic research purposes with proper attribution. Any commercial use, sale, or other monetization of this repository is prohibited and requires prior approval. By downloading any pretrained encoder, you agree to follow the model's respective license.
+Acknowledgements
+This project builds upon numerous open-source contributions, including Timm, Hugging Face, OpenSlide, and others.
+Issues and Contact
+            * Preferred communication: GitHub Issues.
+            * Alternative: Email gjaume@bwh.harvard.edu and andrewzh@mit.edu.
+Funding
+This work was funded by NIH NIGMS R35GM138216.
+How to Cite
+If you find Trident useful in your research, please consider citing:
+@article{zhang2025standardizing,
+ title={Accelerating Data Processing and Benchmarking of AI Models for Pathology},
+ author={Zhang, Andrew and Jaume, Guillaume and Vaidya, Anurag and Ding, Tong and Mahmood, Faisal},
+ journal={arXiv preprint arXiv:2502.06750},
+ year={2025}
+}
+
+@article{vaidya2025molecular,
+ title={Molecular-driven Foundation Model for Oncologic Pathology},
+ author={Vaidya, Anurag and Zhang, Andrew and Jaume, Guillaume and Song, Andrew H and Ding, Tong and Wagner, Sophia J and Lu, Ming Y and Doucet, Paul and Robertson, Harry and Almagro-Perez, Cristina and others},
+ journal={arXiv preprint arXiv:2501.16652},
+ year={2025}
+}

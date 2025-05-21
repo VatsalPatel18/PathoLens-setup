@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WSI Viewer with Heatmap</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+    <style>
+        body { margin: 0; font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
+        #openseadragon-viewer {
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .controls-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-group label {
+            font-size: 0.875rem; /* 14px */
+            color: #333;
+        }
+        .control-group input[type="range"], .control-group input[type="checkbox"] {
+            cursor: pointer;
+        }
+        .control-group button {
+            padding: 8px 12px;
+            background-color: #3b82f6; /* Tailwind blue-500 */
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .control-group button:hover {
+            background-color: #2563eb; /* Tailwind blue-600 */
+        }
+        .info-text {
+            font-size: 0.8rem;
+            color: #555;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col items-center justify-center p-4 bg-gray-100">
+
+    <div class="w-full h-full max-w-7xl max-h-[90vh] relative">
+        <div id="openseadragon-viewer"></div>
+
+        <div class="controls-container">
+            <h2 class="text-lg font-semibold mb-2 text-gray-700">Controls</h2>
+            
+            <div class="control-group">
+                <input type="checkbox" id="toggleHeatmap" checked>
+                <label for="toggleHeatmap">Show Heatmap</label>
+            </div>
+
+            <div class="control-group">
+                <label for="heatmapOpacity">Opacity:</label>
+                <input type="range" id="heatmapOpacity" min="0" max="1" step="0.05" value="0.5">
+            </div>
+
+            <p class="info-text">
+                Slide: <span class="font-semibold">{{ slide_filename }}</span>
+            </p>
+             <p class="info-text">
+                Heatmap: <span class="font-semibold">{{ heatmap_filename }}</span>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Get filenames from Flask template
+        const slideFilename = "{{ slide_filename }}";
+        const heatmapFilename = "{{ heatmap_filename }}";
+
+        // Construct DZI and heatmap URLs
+        const dziUrl = `/slides/${slideFilename}.dzi`;
+        const heatmapUrl = `/heatmaps/${heatmapFilename}`;
+
+        let viewer; // Declare viewer in a broader scope
+
+        // Function to initialize or update OpenSeadragon
+        function initializeViewer() {
+            if (viewer) {
+                viewer.destroy(); // Destroy existing viewer if any
+            }
+
+            viewer = OpenSeadragon({
+                id: "openseadragon-viewer",
+                prefixUrl: "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/",
+                tileSources: [
+                    {
+                        tileSource: dziUrl,
+                        x: 0,
+                        y: 0
+                    }
+                ],
+                animationTime: 0.5,
+                blendTime: 0.1,
+                constrainDuringPan: true,
+                maxZoomPixelRatio: 2,
+                minZoomImageRatio: 0.5,
+                visibilityRatio: 1,
+                zoomPerScroll: 1.5,
+                showNavigator: true,
+                navigatorPosition: "BOTTOM_RIGHT",
+                navigatorBackground: "rgba(255,255,255,0.8)",
+                navigatorBorderColor: "rgba(0,0,0,0.3)",
+                navigatorDisplayRegionColor: "rgba(0,0,0,0.1)"
+            });
+
+            // Wait for the viewer to open the main slide image
+            viewer.addHandler('open', function() {
+                // Add heatmap as an overlay
+                // Get dimensions of the main image (level 0) to scale the heatmap correctly
+                const tiledImage = viewer.world.getItemAt(0); // Assuming the WSI is the first item
+                if (!tiledImage) {
+                    console.error("Main tiled image not found in viewer.");
+                    return;
+                }
+                
+                const imageWidth = tiledImage.source.dimensions.x;
+                const imageHeight = tiledImage.source.dimensions.y;
+
+                // Add heatmap overlay
+                viewer.addTiledImage({
+                    tileSource: {
+                        type: 'image',
+                        url: heatmapUrl
+                    },
+                    x: 0, // Position relative to the main image
+                    y: 0,
+                    width: 1, // Relative to the main image's width (1 means same width)
+                    opacity: parseFloat(document.getElementById('heatmapOpacity').value),
+                    success: function(event) {
+                        console.log("Heatmap overlay added successfully.");
+                        const heatmapOverlay = event.item;
+                        
+                        // Toggle heatmap visibility
+                        document.getElementById('toggleHeatmap').addEventListener('change', function() {
+                            heatmapOverlay.setOpacity(this.checked ? parseFloat(document.getElementById('heatmapOpacity').value) : 0);
+                        });
+
+                        // Adjust heatmap opacity
+                        document.getElementById('heatmapOpacity').addEventListener('input', function() {
+                            if (document.getElementById('toggleHeatmap').checked) {
+                                heatmapOverlay.setOpacity(parseFloat(this.value));
+                            }
+                        });
+
+                        // Initial state based on checkbox
+                        heatmapOverlay.setOpacity(document.getElementById('toggleHeatmap').checked ? parseFloat(document.getElementById('heatmapOpacity').value) : 0);
+                    },
+                    error: function(event) {
+                        console.error("Error loading heatmap overlay:", event);
+                        alert("Error loading heatmap. Check console for details. Ensure '" + heatmapFilename + "' exists in the 'heatmaps' directory.");
+                    }
+                });
+            });
+
+            viewer.addHandler('open-failed', function(event) {
+                console.error("Failed to open DZI:", event);
+                alert("Failed to load slide. Check console for details. Ensure '" + slideFilename + "' exists in the 'slides' directory and is a valid OpenSlide format.");
+            });
+        }
+        
+        // Initialize the viewer on page load
+        document.addEventListener('DOMContentLoaded', initializeViewer);
+
+    </script>
+</body>
+</html>
