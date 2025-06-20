@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template, send_file, abort, make_response
+from flask import Flask, render_template, send_file, abort, make_response, request
 from openslide import OpenSlide, OpenSlideError
 from openslide.deepzoom import DeepZoomGenerator
 from PIL import Image
@@ -11,6 +11,8 @@ app = Flask(__name__)
 # Configuration
 SLIDE_DIR = 'slides'
 HEATMAP_DIR = 'heatmaps'
+DEFAULT_SLIDE = os.environ.get('DEFAULT_SLIDE', 'placeholder.svs')
+DEFAULT_HEATMAP = os.environ.get('DEFAULT_HEATMAP', 'placeholder_heatmap.png')
 TILE_SIZE = 254  # Tile size for Deep Zoom
 OVERLAP = 1      # Overlap for Deep Zoom tiles
 JPEG_QUALITY = 80 # Quality for JPEG tiles
@@ -50,17 +52,22 @@ def get_slide_and_dz(slide_filename):
 @app.route('/')
 def index():
     """Serves the main HTML page."""
-    # IMPORTANT: Replace with your actual slide and heatmap filenames
-    slide_filename = "placeholder.svs"  # Example: "my_tumor_slide.svs"
-    heatmap_filename = "placeholder_heatmap.png" # Example: "my_tumor_slide_heatmap.png"
+    slide_filename = request.args.get('slide') or DEFAULT_SLIDE
+    heatmap_filename = request.args.get('heatmap') or DEFAULT_HEATMAP
     
     slide_path = get_slide_path(slide_filename)
     heatmap_path = get_heatmap_path(heatmap_filename)
 
     if not os.path.exists(slide_path):
-        return "Error: Slide file not found. Please check the SLIDE_DIR and filename in app.py.", 404
+        return (
+            "Error: Slide file not found. Provide ?slide=<filename> or set DEFAULT_SLIDE.",
+            404,
+        )
     if not os.path.exists(heatmap_path):
-        return "Error: Heatmap file not found. Please check the HEATMAP_DIR and filename in app.py.", 404
+        return (
+            "Error: Heatmap file not found. Provide ?heatmap=<filename> or set DEFAULT_HEATMAP.",
+            404,
+        )
         
     return render_template('index.html', slide_filename=slide_filename, heatmap_filename=heatmap_filename)
 
@@ -131,10 +138,14 @@ if __name__ == '__main__':
     os.makedirs(HEATMAP_DIR, exist_ok=True)
     
     # Reminder to add placeholder files if they don't exist
-    if not os.path.exists(os.path.join(SLIDE_DIR, "placeholder.svs")):
-        print(f"Warning: '{os.path.join(SLIDE_DIR, 'placeholder.svs')}' not found. Please add a WSI file.")
-    if not os.path.exists(os.path.join(HEATMAP_DIR, "placeholder_heatmap.png")):
-        print(f"Warning: '{os.path.join(HEATMAP_DIR, 'placeholder_heatmap.png')}' not found. Please add a heatmap image.")
+    if not os.path.exists(get_slide_path(DEFAULT_SLIDE)):
+        print(
+            f"Warning: '{get_slide_path(DEFAULT_SLIDE)}' not found. Provide a slide file or set DEFAULT_SLIDE."
+        )
+    if not os.path.exists(get_heatmap_path(DEFAULT_HEATMAP)):
+        print(
+            f"Warning: '{get_heatmap_path(DEFAULT_HEATMAP)}' not found. Provide a heatmap file or set DEFAULT_HEATMAP."
+        )
         
     app.run(debug=True, host='0.0.0.0', port=5000)
 
