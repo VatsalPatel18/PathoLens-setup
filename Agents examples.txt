@@ -1,4 +1,4 @@
-﻿ADK Example Projects: Structure and ADK Usage
+ADK Example Projects: Structure and ADK Usage
 This document provides a detailed breakdown of various example projects built using the Agent Development Kit (ADK). For each project, it outlines its structure, the ADK components utilized, and how these components are configured and interact.
 Table of Contents
 1. Brand Search Optimization (brand-search-optimization)
