@@ -1,4 +1,4 @@
-﻿# 🔱 Trident: Whole-Slide Image Processing Toolkit
+# 🔱 Trident: Whole-Slide Image Processing Toolkit
 
 **[arXiv](https://arxiv.org/pdf/2502.06750) | [Blog](https://www.linkedin.com/pulse/announcing-new-open-source-tools-accelerate-ai-pathology-andrew-zhang-loape/) | [Documentation](https://trident-docs.readthedocs.io/en/latest/) | [License](#license-and-terms-of-use)**
 

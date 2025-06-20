@@ -1,4 +1,4 @@
-﻿Agent Development Kit (ADK) Documentation
+Agent Development Kit (ADK) Documentation
 This document provides a precise overview of the Agent Development Kit (ADK), detailing its core components, functionalities, and implementation guidelines. It is intended for developers and AI models interacting with this SDK.
 Core Concepts
 The SDK is designed to build and run sophisticated AI agents. Key concepts include:
