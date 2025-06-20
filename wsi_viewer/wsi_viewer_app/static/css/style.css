@@ -96,5 +96,3 @@ body {
     border-radius: 4px;
     background-color: rgba(250, 250, 250, 0.85);
 }
-```
-You can create a file `static/css/style.css` and paste this CSS content into it. Then, in `templates/index.html`, uncomment or add the line: `<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">` inside the `<head>` section if you prefer to use this stylesheet over the inline styles or Tailwind utility classes for these specific elements. For simplicity, the HTML provided uses inline Tailwind and `<style>` ta
